@@ -1,4 +1,4 @@
-# AI YouTube Summarizer
+# AI YouTube Video Summarizer
 
 An AI-powered YouTube video summarizer built using React, FastAPI, Faster-Whisper, Groq LLMs, and modern cloud deployment platforms.
 
