@@ -8,13 +8,13 @@ import yt_dlp
 import os
 import uuid
 
-# Load env
+# Load environment variables
 load_dotenv()
 
 # FastAPI app
 app = FastAPI()
 
-# CORS
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,6 +39,7 @@ class VideoRequest(BaseModel):
 # Home route
 @app.get("/")
 def home():
+
     return {
         "message": "AI YouTube Summarizer API Running"
     }
@@ -47,32 +48,41 @@ def home():
 @app.post("/summarize")
 def summarize_video(data: VideoRequest):
 
+    audio_file = None
+
     try:
 
-        # Unique filename
+        # Generate unique filename
         filename = str(uuid.uuid4())
 
-        # Download audio
+        # yt-dlp options
         ydl_opts = {
             'format': 'bestaudio/best',
-            'outtmpl': f'{filename}.%(ext)s',
             'quiet': True,
+            'noplaylist': True,
+            'extractaudio': True,
+            'audioformat': 'mp3',
+            'outtmpl': f'{filename}.%(ext)s',
+            'cookiefile': None,
+            'nocheckcertificate': True,
+            'ignoreerrors': True,
+            'no_warnings': True,
         }
 
+        # Download YouTube audio
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([data.url])
 
-        # Find downloaded file
-        audio_file = None
-
+        # Find downloaded audio file
         for file in os.listdir():
             if file.startswith(filename):
                 audio_file = file
                 break
 
         if not audio_file:
+
             return {
-                "error": "Audio download failed"
+                "error": "Failed to download video audio. Try another public YouTube video."
             }
 
         # Transcribe audio
@@ -86,8 +96,8 @@ def summarize_video(data: VideoRequest):
         # Limit transcript size
         transcript = transcript[:4000]
 
-        # AI Prompt
-        prompt = f'''
+        # AI prompt
+        prompt = f"""
         Summarize this YouTube video transcript.
 
         Provide:
@@ -97,9 +107,9 @@ def summarize_video(data: VideoRequest):
 
         Transcript:
         {transcript}
-        '''
+        """
 
-        # Groq summary
+        # Generate AI summary
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
@@ -112,8 +122,9 @@ def summarize_video(data: VideoRequest):
 
         summary = response.choices[0].message.content
 
-        # Cleanup audio file
-        os.remove(audio_file)
+        # Cleanup downloaded audio
+        if audio_file and os.path.exists(audio_file):
+            os.remove(audio_file)
 
         return {
             "summary": summary
@@ -121,6 +132,20 @@ def summarize_video(data: VideoRequest):
 
     except Exception as e:
 
+        # Cleanup if file exists
+        if audio_file and os.path.exists(audio_file):
+            os.remove(audio_file)
+
+        error_message = str(e)
+
+        # Friendly YouTube blocking message
+        if "Sign in to confirm you're not a bot" in error_message:
+
+            return {
+                "error": "YouTube blocked this video for cloud access. Please try another public YouTube video."
+            }
+
+        # Generic error
         return {
-            "error": str(e)
+            "error": "Something went wrong while processing the video."
         }
