@@ -64,7 +64,7 @@ React Frontend
 # Project Structure
 
 ```bash
-youtube-ai-summarizer
+youtube-video-ai-summarizer
 │
 ├── backend
 │   ├── app.py
