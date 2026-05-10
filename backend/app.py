@@ -1,20 +1,20 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from youtube_transcript_api import YouTubeTranscriptApi
 from openai import OpenAI
-from mangum import Mangum
 from dotenv import load_dotenv
+from faster_whisper import WhisperModel
+import yt_dlp
 import os
-import re
+import uuid
 
-# Load environment variables
+# Load env
 load_dotenv()
 
 # FastAPI app
 app = FastAPI()
 
-# Enable CORS
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,26 +29,16 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-# Request body model
+# Whisper model
+whisper_model = WhisperModel("base")
+
+# Request model
 class VideoRequest(BaseModel):
     url: str
-
-# Extract YouTube video ID
-def extract_video_id(url):
-
-    regex = r"(?:v=|\/)([0-9A-Za-z_-]{11}).*"
-
-    match = re.search(regex, url)
-
-    if not match:
-        return None
-
-    return match.group(1)
 
 # Home route
 @app.get("/")
 def home():
-
     return {
         "message": "AI YouTube Summarizer API Running"
     }
@@ -59,31 +49,45 @@ def summarize_video(data: VideoRequest):
 
     try:
 
-        # Extract video ID
-        video_id = extract_video_id(data.url)
+        # Unique filename
+        filename = str(uuid.uuid4())
 
-        if not video_id:
+        # Download audio
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': f'{filename}.%(ext)s',
+            'quiet': True,
+        }
 
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([data.url])
+
+        # Find downloaded file
+        audio_file = None
+
+        for file in os.listdir():
+            if file.startswith(filename):
+                audio_file = file
+                break
+
+        if not audio_file:
             return {
-                "error": "Invalid YouTube URL"
+                "error": "Audio download failed"
             }
 
-        # Fetch transcript
-        api = YouTubeTranscriptApi()
+        # Transcribe audio
+        segments, info = whisper_model.transcribe(audio_file)
 
-        try:
-            transcript = api.fetch(video_id)
+        transcript = ""
 
-        except Exception:
-            return {
-                "error": "Transcript unavailable for this video. Try another YouTube video."
-            }
+        for segment in segments:
+            transcript += segment.text + " "
 
-        # Reduce transcript size for faster AI response
-        text = " ".join([item.text for item in transcript[:50]])
+        # Limit transcript size
+        transcript = transcript[:4000]
 
         # AI Prompt
-        prompt = f"""
+        prompt = f'''
         Summarize this YouTube video transcript.
 
         Provide:
@@ -92,10 +96,10 @@ def summarize_video(data: VideoRequest):
         3. Important Insights
 
         Transcript:
-        {text}
-        """
+        {transcript}
+        '''
 
-        # Groq AI response
+        # Groq summary
         response = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
@@ -108,6 +112,9 @@ def summarize_video(data: VideoRequest):
 
         summary = response.choices[0].message.content
 
+        # Cleanup audio file
+        os.remove(audio_file)
+
         return {
             "summary": summary
         }
@@ -117,6 +124,3 @@ def summarize_video(data: VideoRequest):
         return {
             "error": str(e)
         }
-
-# AWS Lambda handler
-handler = Mangum(app)
